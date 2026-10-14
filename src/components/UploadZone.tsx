@@ -1,5 +1,6 @@
 import { ChangeEvent, DragEvent, useRef, useState } from 'react';
 import { AlertCircle, FileSpreadsheet, UploadCloud } from 'lucide-react';
+import { isExcelFile } from '../hooks/useCsvParser';
 
 interface UploadZoneProps {
   onFileUpload: (file: File) => void;
@@ -11,6 +12,8 @@ interface UploadZoneProps {
 const isCsvFile = (file: File) =>
   file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv') || file.type === 'application/vnd.ms-excel';
 
+const isSupportedFile = (file: File) => isCsvFile(file) || isExcelFile(file);
+
 export default function UploadZone({ onFileUpload, isLoading, error, lastImportLabel }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -18,7 +21,7 @@ export default function UploadZone({ onFileUpload, isLoading, error, lastImportL
   const handleFiles = (files: FileList | null) => {
     const file = files?.[0];
 
-    if (!file || !isCsvFile(file)) {
+    if (!file || !isSupportedFile(file)) {
       return;
     }
 
@@ -55,20 +58,20 @@ export default function UploadZone({ onFileUpload, isLoading, error, lastImportL
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
       >
-        <input ref={inputRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={handleInputChange} />
+        <input ref={inputRef} type="file" accept=".xlsx,.xlsm,.xls,.csv,text/csv" className="sr-only" onChange={handleInputChange} />
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-cyan-400/30 bg-cyan-500/10 text-cyan-200">
             <UploadCloud className="h-6 w-6" aria-hidden="true" />
           </span>
           <div>
             <p className="font-mono text-sm font-medium uppercase tracking-[0.18em] text-cyan-200">
-              CSV Upload
+              Excel / CSV Upload
             </p>
             <p className="mt-1 text-lg font-semibold text-white">
-              CSVをドラッグ＆ドロップ、またはクリックして選択
+              在庫リスト（Excel・CSV）をドラッグ＆ドロップ、またはクリックして選択
             </p>
             <p className="mt-1 text-sm text-slate-400">
-              商品コード、商品名、カテゴリ、販売価格、在庫数、発注点のヘッダーに対応します。
+              品番（SKU）、商品名、バリエーション、販売可能数のほか、カテゴリ、販売価格、発注点のヘッダーに対応します。
             </p>
           </div>
         </div>

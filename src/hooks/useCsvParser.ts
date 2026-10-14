@@ -5,25 +5,23 @@ import { DEFAULT_ALERT_LINE } from '../utils/stockAlert';
 type RawInventoryRow = Record<string, string | number | undefined>;
 
 const headerCandidates = {
-  code: ['SKUコード', '商品コード', 'sku', 'SKU', 'code', 'product_code'],
+  code: ['品番（SKU）', '品番', 'SKUコード', '商品コード', 'sku', 'SKU', 'code', 'product_code'],
   name: ['商品名', 'name', 'product_name'],
+  variant: ['バリエーション', 'variant', 'variation'],
   category: ['カテゴリ', 'カテゴリー', 'category'],
   price: ['販売価格', '売価', '通常価', '価格', 'price', 'selling_price'],
-  stock: ['在庫数', '在庫', 'stock', 'quantity'],
+  stock: ['販売可能数', '在庫数', '在庫', 'stock', 'quantity'],
   reorderPoint: ['発注点', 'アラート閾値', 'reorder_point', 'threshold'],
 };
 
+// Shopifyなどで単一バリエーション商品に付く既定のバリエーション名
+const defaultVariantLabels = new Set(['defaulttitle']);
+
 const ignorableParseErrorCodes = new Set(['TooFewFields', 'TooManyFields']);
 
-const normalizeHeader = (value: string) => value.trim().replace(/\s+/g, '').toLowerCase();
+const excelFilePattern = /\.(xlsx|xlsm|xls)$/i;
 
-const readField = (row: RawInventoryRow, candidates: string[]) => {
-  const entries = Object.entries(row);
-  const normalizedCandidates = candidates.map(normalizeHeader);
-  const match = entries.find(([key]) => normalizedCandidates.includes(normalizeHeader(key)));
-
-  return match?.[1];
-};
+const normalizeHeader = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, '').toLowerCase();
 
 const readFields = (row: RawInventoryRow, candidates: string[]) => {
   const entries = Object.entries(row);
@@ -33,6 +31,12 @@ const readFields = (row: RawInventoryRow, candidates: string[]) => {
     .map((candidate) => entries.find(([key]) => normalizeHeader(key) === candidate)?.[1])
     .filter((value): value is string | number => value !== undefined);
 };
+
+// 候補の並び順を優先度として扱う（販売可能数と在庫数が両方ある場合は販売可能数を採用）
+const readField = (row: RawInventoryRow, candidates: string[]) => readFields(row, candidates)[0];
+
+const composeName = (name: string, variant: string) =>
+  !variant || defaultVariantLabels.has(normalizeHeader(variant)) ? name : `${name} / ${variant}`;
 
 const parseNumber = (value: string | number | undefined, fallback = 0) => {
   if (typeof value === 'number') {
@@ -112,7 +116,9 @@ const toInventoryItems = (
   return rows
     .map<InventoryItem | null>((row) => {
       const code = String(readField(row, headerCandidates.code) ?? '').trim();
-      const name = String(readField(row, headerCandidates.name) ?? '').trim();
+      const baseName = String(readField(row, headerCandidates.name) ?? '').trim();
+      const variant = String(readField(row, headerCandidates.variant) ?? '').trim();
+      const name = baseName ? composeName(baseName, variant) : '';
       const category = String(readField(row, headerCandidates.category) ?? '未分類').trim() || '未分類';
       const price = readPrice(row);
       const stock = parseNumber(readField(row, headerCandidates.stock));
@@ -161,7 +167,15 @@ export const parseInventoryCsvText = (
     }
   }
 
-  const items = toInventoryItems(result.data, previousItems, defaultReorderPoint);
+  return toValidInventoryItems(result.data, previousItems, defaultReorderPoint);
+};
+
+const toValidInventoryItems = (
+  rows: RawInventoryRow[],
+  previousItems: InventoryItem[],
+  defaultReorderPoint: number,
+) => {
+  const items = toInventoryItems(rows, previousItems, defaultReorderPoint);
 
   if (items.length === 0) {
     throw new Error('有効な商品行が見つかりませんでした。商品コードと商品名を確認してください。');
@@ -169,6 +183,97 @@ export const parseInventoryCsvText = (
 
   return items;
 };
+
+const toCellValue = (value: unknown): string | number | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  return typeof value === 'number' ? value : String(value);
+};
+
+const findHeaderRowIndex = (rows: unknown[][]) => {
+  const codeHeaders = headerCandidates.code.map(normalizeHeader);
+
+  return rows.findIndex((row) =>
+    row.some((cell) => typeof cell === 'string' && codeHeaders.includes(normalizeHeader(cell))),
+  );
+};
+
+const brokenWorkbookMessage =
+  'Excelファイルを読み込めませんでした。ファイルが壊れているか、ダウンロードが途中で止まっている可能性があります。';
+
+// xlsxはZIP形式。末尾の終端レコードが無い（途中で切れた）ファイルはSheetJSが応答しなくなるため事前に弾く
+const isTruncatedZip = (bytes: Uint8Array) => {
+  const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+
+  if (!isZip) {
+    return false;
+  }
+
+  const searchStart = Math.max(0, bytes.length - 65557);
+
+  for (let index = bytes.length - 22; index >= searchStart; index -= 1) {
+    if (bytes[index] === 0x50 && bytes[index + 1] === 0x4b && bytes[index + 2] === 0x05 && bytes[index + 3] === 0x06) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+export const parseInventoryWorkbook = async (
+  buffer: ArrayBuffer,
+  previousItems: InventoryItem[] = [],
+  defaultReorderPoint = DEFAULT_ALERT_LINE,
+) => {
+  // Excel取込時のみ読み込み、初期表示のバンドルを軽く保つ
+  const { read, utils } = await import('xlsx');
+  const bytes = new Uint8Array(buffer);
+
+  if (isTruncatedZip(bytes)) {
+    throw new Error(brokenWorkbookMessage);
+  }
+
+  let workbook: ReturnType<typeof read>;
+
+  try {
+    workbook = read(bytes, { type: 'array' });
+  } catch {
+    throw new Error(brokenWorkbookMessage);
+  }
+
+  for (const sheetName of workbook.SheetNames) {
+    const rows = utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
+      header: 1,
+      raw: true,
+      defval: '',
+      blankrows: false,
+    });
+    const headerIndex = findHeaderRowIndex(rows);
+
+    if (headerIndex < 0) {
+      continue;
+    }
+
+    const headers = rows[headerIndex].map((cell) => String(cell ?? '').trim());
+    const records = rows.slice(headerIndex + 1).map((row) =>
+      headers.reduce<RawInventoryRow>((record, header, index) => {
+        if (header) {
+          record[header] = toCellValue(row[index]);
+        }
+
+        return record;
+      }, {}),
+    );
+
+    return toValidInventoryItems(records, previousItems, defaultReorderPoint);
+  }
+
+  throw new Error('在庫シートが見つかりませんでした。「品番（SKU）」などの商品コード列があるか確認してください。');
+};
+
+export const isExcelFile = (file: File) => excelFilePattern.test(file.name);
 
 export const parseInventoryCsvFile = (
   file: File,
@@ -178,8 +283,13 @@ export const parseInventoryCsvFile = (
   new Promise<InventoryItem[]>((resolve, reject) => {
     file
       .arrayBuffer()
-      .then((buffer) => decodeFileBuffer(buffer))
-      .then((csvText) => resolve(parseInventoryCsvText(csvText, previousItems, defaultReorderPoint)))
+      .then((buffer) =>
+        resolve(
+          isExcelFile(file)
+            ? parseInventoryWorkbook(buffer, previousItems, defaultReorderPoint)
+            : parseInventoryCsvText(decodeFileBuffer(buffer), previousItems, defaultReorderPoint),
+        ),
+      )
       .catch((error) => reject(error));
   });
 

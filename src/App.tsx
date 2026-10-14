@@ -115,7 +115,7 @@ function App() {
               在庫管理コンソール
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-              週次CSVマスタを読み込み、在庫アラート、差分、カテゴリ別の在庫量を一画面で確認できます。
+              週次の在庫リスト（Excel・CSV）を読み込み、在庫アラート、差分、カテゴリ別の在庫量を一画面で確認できます。
             </p>
           </div>
           <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-950/60 px-4 py-3">

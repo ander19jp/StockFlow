@@ -17,7 +17,7 @@ const createEmptyState = (): StoredInventoryState => ({
   parserVersion: STORAGE_VERSION,
   items: [],
   alertLine: DEFAULT_ALERT_LINE,
-  lastImportLabel: 'CSV未取込',
+  lastImportLabel: 'ファイル未取込',
 });
 
 const readStoredState = (): StoredInventoryState => {
@@ -84,7 +84,7 @@ export const useInventory = () => {
         setItems(parsedItems);
         setLastImportLabel(`${file.name} / ${new Date().toLocaleString('ja-JP')}`);
       } catch (caughtError) {
-        setError(caughtError instanceof Error ? caughtError.message : 'CSVの読み込みに失敗しました。');
+        setError(caughtError instanceof Error ? caughtError.message : 'ファイルの読み込みに失敗しました。');
       } finally {
         setIsLoading(false);
       }

@@ -59,7 +59,7 @@ export default function ItemDetailModal({ item, alertLine, onClose, onSaveCommen
             </div>
             <Detail label="販売価格" value={formatYen(item.price)} />
             <Detail label="在庫数" value={`${formatNumber(item.stock)} 点`} />
-            <Detail label="CSV発注点" value={`${formatNumber(item.reorderPoint)} 点`} />
+            <Detail label="発注点" value={`${formatNumber(item.reorderPoint)} 点`} />
             <Detail label="アラートライン" value={`${formatNumber(alertLine)} 点`} />
             <Detail label="判定ライン" value={`${formatNumber(threshold)} 点`} />
             <Detail
